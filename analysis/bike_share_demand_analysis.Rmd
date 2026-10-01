@@ -1,0 +1,86 @@
+---
+title: "Bike Share Demand & Weather Analytics"
+output: html_document
+---
+
+```{r setup}
+df <- read.csv("data/bikeshare.csv")
+df$weathersit <- factor(df$weathersit)
+summary(df[, c("cnt","weathersit","temp","hum","windspeed")])
+```
+
+## Demand distribution and weather groups
+```{r}
+hist(df$cnt, breaks=40, main="Distribution of Bike Rentals", xlab="Rentals")
+boxplot(cnt ~ weathersit, data=df, ylab="Bike rentals", xlab="Weather situation")
+```
+
+## Multiple regression
+```{r}
+base_model <- lm(cnt ~ weathersit + temp + hum + windspeed, data=df)
+summary(base_model)
+```
+
+## Interaction model
+```{r}
+interaction_model <- lm(cnt ~ weathersit * (temp + hum + windspeed), data=df)
+summary(interaction_model)
+```
+
+The interaction terms test whether slopes for temperature, humidity, or windspeed differ by weather condition.
+
+## Translate normalized temperature to a 10°C change
+```{r}
+delta_temp_norm <- 10 / 41
+coefs <- coef(interaction_model)
+
+temp_effect_for_level <- function(level_number) {
+  base <- coefs[["temp"]]
+  if (level_number == 1) return(base * delta_temp_norm)
+  pattern <- paste0("weathersit", level_number, ":temp|temp:weathersit", level_number)
+  interaction <- unname(coefs[grep(pattern, names(coefs))])
+  (base + interaction) * delta_temp_norm
+}
+
+temp_effect_for_level(1)
+if ("2" %in% levels(df$weathersit)) temp_effect_for_level(2)
+if ("3" %in% levels(df$weathersit)) temp_effect_for_level(3)
+```
+
+## Log-demand model
+```{r}
+df$log_cnt <- log(df$cnt)
+log_model <- lm(log_cnt ~ weathersit * (temp + hum + windspeed), data=df)
+summary(log_model)
+
+# For a coefficient b and change delta, exp(b*delta) is the multiplicative effect.
+exp(coef(log_model)[["temp"]] * delta_temp_norm)
+```
+
+## Example prediction
+```{r}
+new_case <- data.frame(
+  weathersit=factor(levels(df$weathersit)[1], levels=levels(df$weathersit)),
+  temp=25/41, hum=0.5, windspeed=5/67
+)
+predict(interaction_model, newdata=new_case)
+exp(predict(log_model, newdata=new_case))
+```
+
+## High-demand logistic model
+The source coursework defined a high-demand day as more than 7,000 rentals.
+
+```{r}
+df$busy <- as.integer(df$cnt > 7000)
+busy_model <- glm(
+  busy ~ weathersit * (temp + hum + windspeed),
+  data=df, family=binomial
+)
+summary(busy_model)
+
+# Temperature odds ratio for a 10°C change in the reference weather condition
+exp(coef(busy_model)[["temp"]] * delta_temp_norm)
+```
+
+## Interpretation
+Interaction coefficients should not be interpreted in isolation. For a non-reference weather group, the relevant temperature slope is the reference temperature coefficient plus that group's temperature interaction coefficient.
